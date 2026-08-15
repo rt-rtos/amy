@@ -824,6 +824,11 @@ void amy_event_to_deltas_queue(amy_event *e, uint16_t base_osc, struct delta **q
     }
     EVENT_TO_DELTA_I(note_source_channel, NOTE_SOURCE_CHANNEL)
     EVENT_TO_DELTA_I(filter_type, FILTER_TYPE)
+    EVENT_TO_DELTA_F(dist_type, DIST_TYPE)
+    EVENT_TO_DELTA_F(dist_drive, DIST_DRIVE)
+    EVENT_TO_DELTA_F(dist_bits, DIST_BITS)
+    EVENT_TO_DELTA_F(dist_rate, DIST_RATE)
+    EVENT_TO_DELTA_F(dist_mix, DIST_MIX)
     EVENT_TO_DELTA_I(algorithm, ALGORITHM)
     EVENT_TO_DELTA_I(eg_type[0], EG0_TYPE)
     EVENT_TO_DELTA_I(eg_type[1], EG1_TYPE)
@@ -949,6 +954,11 @@ void reset_osc_params(struct synthinfo *psynth) {
     psynth->portamento_alpha = 0;
     psynth->resonance = 0.7f;
     psynth->filter_type = FILTER_NONE;
+    psynth->dist_type = DIST_OFF;
+    psynth->dist_drive = 1.0f;
+    psynth->dist_bits = 16.0f;
+    psynth->dist_rate = 1.0f;
+    psynth->dist_mix = 1.0f;
     AMY_UNSET(psynth->chained_osc);
     for(uint8_t j=0;j<NUM_MOD_SOURCES;j++) AMY_UNSET(psynth->mod_source[j]);
     psynth->algorithm = 0;
@@ -986,6 +996,8 @@ void reset_osc_state(struct synthinfo *psynth) {
     psynth->last_two[1] = 0;
     for(int j = 0; j < 2 * FILT_NUM_DELAYS; ++j) psynth->filter_delay[j] = 0;
     psynth->last_filt_norm_bits = 0;
+    psynth->dist_hold = 0;
+    psynth->dist_hold_count = 0;
 }
 
 void reset_osc_by_pointer(struct synthinfo *psynth, struct mod_synthinfo *pmsynth) {
@@ -1516,6 +1528,39 @@ void play_delta(struct delta *d) {
     DELTA_TO_SYNTH_F(RATIO, logratio)
     DELTA_TO_SYNTH_F(RESONANCE, resonance)
     DELTA_TO_SYNTH_I(FILTER_TYPE, filter_type)
+    if (d->param == DIST_TYPE) {
+        // Range-check as float before the cast (huge values are UB to cast).
+        // Restart the rate reducer so a type change can't replay a stale held sample.
+        float type = d->data.f;
+        synth[d->osc]->dist_type = (type >= DIST_OFF && type <= DIST_CRUSH) ? (uint8_t)type : DIST_OFF;
+        synth[d->osc]->dist_hold = 0;
+        synth[d->osc]->dist_hold_count = 0;
+    }
+    // Clamp here so dist_process doesn't range-check per block.
+    if (d->param == DIST_DRIVE) {
+        float drive = d->data.f;
+        if (drive < 0) drive = 0;
+        if (drive > 16.0f) drive = 16.0f;
+        synth[d->osc]->dist_drive = drive;
+    }
+    if (d->param == DIST_BITS) {
+        float bits = d->data.f;
+        if (bits < 1.0f) bits = 1.0f;
+        if (bits > 24.0f) bits = 24.0f;  // > S_FRAC_BITS: quantization off
+        synth[d->osc]->dist_bits = bits;
+    }
+    if (d->param == DIST_RATE) {
+        float rate = d->data.f;
+        if (rate < 1.0f) rate = 1.0f;
+        if (rate > 1024.0f) rate = 1024.0f;
+        synth[d->osc]->dist_rate = rate;
+    }
+    if (d->param == DIST_MIX) {
+        float mix = d->data.f;
+        if (mix < 0) mix = 0;
+        if (mix > 1.0f) mix = 1.0f;
+        synth[d->osc]->dist_mix = mix;
+    }
     DELTA_TO_SYNTH_I(NOTE_SOURCE_CHANNEL, s_note_source_channel)
     DELTA_TO_SYNTH_I(EG0_TYPE, eg_type[0])
     DELTA_TO_SYNTH_I(EG1_TYPE, eg_type[1])
@@ -2036,6 +2081,11 @@ SAMPLE render_osc_wave(uint16_t osc, uint8_t core, SAMPLE* buf) {
             if(synth[osc]->wave == CUSTOM) max_val = render_custom(buf, osc);
         }
         if (synth[osc]->wave != SILENT) {
+            // apply distortion to osc if set, pre-filter; returns its own max
+            // (folding can amplify a quiet release tail).
+            if (synth[osc]->dist_type != DIST_OFF) {
+                max_val = dist_process(buf, osc);
+            }
             // apply filter to osc if set
             if (synth[osc]->filter_type != FILTER_NONE) {
                 max_val = filter_process(buf, osc, max_val);
