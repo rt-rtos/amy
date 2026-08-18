@@ -594,6 +594,28 @@ float logfreq_of_freq(float freq) {
     return 2.0f + S2F(log2_lut(F2S(freq / (4 * ZERO_LOGFREQ_IN_HZ))));
 }
 
+// Drive rides a log2 rail, like freq and filter freq.  The wire and the CONST
+// coef carry linear drive; the modulation coefs carry octaves of it, so a
+// velocity or LFO coef of 1 doubles the drive.  The clamp is the rail's range:
+// 2^-4 .. 2^4, i.e. the old 0..16 with the degenerate zero replaced by a floor
+// (mix, not drive, is how you turn the stage down).
+#define MIN_DIST_LOGDRIVE (-4.0f)
+#define MAX_DIST_LOGDRIVE 4.0f
+
+float logdrive_of_drive(float drive) {
+    if (drive <= 0) return MIN_DIST_LOGDRIVE;
+    float logdrive = log2f(drive);
+    if (logdrive < MIN_DIST_LOGDRIVE) logdrive = MIN_DIST_LOGDRIVE;
+    if (logdrive > MAX_DIST_LOGDRIVE) logdrive = MAX_DIST_LOGDRIVE;
+    return logdrive;
+}
+
+float drive_of_logdrive(float logdrive) {
+    if (logdrive < MIN_DIST_LOGDRIVE) logdrive = MIN_DIST_LOGDRIVE;
+    if (logdrive > MAX_DIST_LOGDRIVE) logdrive = MAX_DIST_LOGDRIVE;
+    return exp2f(logdrive);
+}
+
 float freq_of_logfreq(float logfreq) {
     if (logfreq==ZERO_HZ_LOG_VAL) return 0;
     //return ZERO_LOGFREQ_IN_HZ * exp2f(logfreq);
@@ -825,10 +847,10 @@ void amy_event_to_deltas_queue(amy_event *e, uint16_t base_osc, struct delta **q
     EVENT_TO_DELTA_I(note_source_channel, NOTE_SOURCE_CHANNEL)
     EVENT_TO_DELTA_I(filter_type, FILTER_TYPE)
     EVENT_TO_DELTA_F(dist_type, DIST_TYPE)
-    EVENT_TO_DELTA_F(dist_drive, DIST_DRIVE)
     EVENT_TO_DELTA_F(dist_bits, DIST_BITS)
     EVENT_TO_DELTA_F(dist_rate, DIST_RATE)
-    EVENT_TO_DELTA_F(dist_mix, DIST_MIX)
+    EVENT_TO_DELTA_COEFS_COEF0_SPECIAL(dist_drive_coefs, DIST_LOGDRIVE, logdrive_of_drive)
+    EVENT_TO_DELTA_COEFS(dist_mix_coefs, DIST_MIX)
     EVENT_TO_DELTA_I(algorithm, ALGORITHM)
     EVENT_TO_DELTA_I(eg_type[0], EG0_TYPE)
     EVENT_TO_DELTA_I(eg_type[1], EG1_TYPE)
@@ -922,6 +944,8 @@ void reset_modosc(struct mod_synthinfo *pmsynth) {
         pmsynth->pan = 0.5f;
         pmsynth->feedback = F2S(0); //.996; todo ks feedback is v different from fm feedback
         pmsynth->resonance = 0.7f;
+        pmsynth->dist_drive = 1.0f;
+        pmsynth->dist_mix = 1.0f;
         pmsynth->state = 0;
     }
 }
@@ -954,11 +978,15 @@ void reset_osc_params(struct synthinfo *psynth) {
     psynth->portamento_alpha = 0;
     psynth->resonance = 0.7f;
     psynth->filter_type = FILTER_NONE;
-    psynth->dist.type = DIST_OFF;
-    psynth->dist.drive = 1.0f;
-    psynth->dist.bits = 16.0f;
-    psynth->dist.rate = 1.0f;
-    psynth->dist.mix = 1.0f;
+    psynth->dist_type = DIST_OFF;
+    psynth->dist_bits = 16.0f;
+    psynth->dist_rate = 1.0f;
+    for (int j = 0; j < NUM_COMBO_COEFS; ++j) {
+        psynth->dist_logdrive_coefs[j] = 0;
+        psynth->dist_mix_coefs[j] = 0;
+    }
+    psynth->dist_logdrive_coefs[COEF_CONST] = 0;  // log2(1.0): unity drive.
+    psynth->dist_mix_coefs[COEF_CONST] = 1.0f;
     AMY_UNSET(psynth->chained_osc);
     for(uint8_t j=0;j<NUM_MOD_SOURCES;j++) AMY_UNSET(psynth->mod_source[j]);
     psynth->algorithm = 0;
@@ -1244,6 +1272,8 @@ void print_osc_debug(uint16_t i /* osc */, bool show_eg) {
     fprint_combo_coefs("flf_coefs", synth[i]->filter_logfreq_coefs);
     fprint_combo_coefs("dut_coefs", synth[i]->duty_coefs);
     fprint_combo_coefs("pan_coefs", synth[i]->pan_coefs);
+    fprint_combo_coefs("dsd_coefs", synth[i]->dist_logdrive_coefs);
+    fprint_combo_coefs("dsm_coefs", synth[i]->dist_mix_coefs);
     if(show_eg) {
         for(uint8_t j=0;j<MAX_BREAKPOINT_SETS;j++) {
             fprintf(stderr,"  eg%" PRIu8 " (type %" PRIu8 "): ", j, synth[i]->eg_type[j]);
@@ -1532,34 +1562,24 @@ void play_delta(struct delta *d) {
         // Range-check as float before the cast (huge values are UB to cast).
         // Restart the rate reducer so a type change can't replay a stale held sample.
         float type = d->data.f;
-        synth[d->osc]->dist.type = (type >= DIST_OFF && type <= DIST_CRUSH) ? (uint8_t)type : DIST_OFF;
+        synth[d->osc]->dist_type = (type >= DIST_OFF && type <= DIST_CRUSH) ? (uint8_t)type : DIST_OFF;
         synth[d->osc]->dist_state.hold = 0;
         synth[d->osc]->dist_state.hold_count = 0;
     }
-    // Clamp here so dist_process doesn't range-check per block.
-    if (d->param == DIST_DRIVE) {
-        float drive = d->data.f;
-        if (drive < 0) drive = 0;
-        if (drive > 16.0f) drive = 16.0f;
-        synth[d->osc]->dist.drive = drive;
-    }
+    // Drive and mix are clamped in hold_and_modify instead, where the coefs
+    // are combined; bits and rate have no coef rail, so they clamp here and
+    // dist_block still gets a fully checked config.
     if (d->param == DIST_BITS) {
         float bits = d->data.f;
         if (bits < 1.0f) bits = 1.0f;
         if (bits > 24.0f) bits = 24.0f;  // > S_FRAC_BITS: quantization off
-        synth[d->osc]->dist.bits = bits;
+        synth[d->osc]->dist_bits = bits;
     }
     if (d->param == DIST_RATE) {
         float rate = d->data.f;
         if (rate < 1.0f) rate = 1.0f;
         if (rate > 1024.0f) rate = 1024.0f;
-        synth[d->osc]->dist.rate = rate;
-    }
-    if (d->param == DIST_MIX) {
-        float mix = d->data.f;
-        if (mix < 0) mix = 0;
-        if (mix > 1.0f) mix = 1.0f;
-        synth[d->osc]->dist.mix = mix;
+        synth[d->osc]->dist_rate = rate;
     }
     DELTA_TO_SYNTH_I(NOTE_SOURCE_CHANNEL, s_note_source_channel)
     DELTA_TO_SYNTH_I(EG0_TYPE, eg_type[0])
@@ -1578,6 +1598,8 @@ void play_delta(struct delta *d) {
     DELTA_TO_COEFS(FILTER_FREQ, filter_logfreq_coefs)
     DELTA_TO_COEFS(DUTY, duty_coefs)
     DELTA_TO_COEFS(PAN, pan_coefs)
+    DELTA_TO_COEFS(DIST_LOGDRIVE, dist_logdrive_coefs)
+    DELTA_TO_COEFS(DIST_MIX, dist_mix_coefs)
 
     // todo, i really should clean this up
     if (PARAM_IS_BP_COEF(d->param)) {
@@ -1951,6 +1973,17 @@ void hold_and_modify(uint16_t osc) {
     msynth[osc]->filter_logfreq = filter_logfreq;
     msynth[osc]->duty = combine_controls(ctrl_inputs, synth[osc]->duty_coefs);
 
+    if (synth[osc]->dist_type != DIST_OFF) {
+        // Both clamps live here, so dist_block still receives a checked config
+        // once per block and its per-sample loops stay range-check free.
+        msynth[osc]->dist_drive = drive_of_logdrive(
+            combine_controls(ctrl_inputs, synth[osc]->dist_logdrive_coefs));
+        float dist_mix = combine_controls(ctrl_inputs, synth[osc]->dist_mix_coefs);
+        if (dist_mix < 0) dist_mix = 0;
+        if (dist_mix > 1.0f) dist_mix = 1.0f;
+        msynth[osc]->dist_mix = dist_mix;
+    }
+
     msynth[osc]->last_pan = msynth[osc]->pan;
     msynth[osc]->pan = combine_controls(ctrl_inputs, synth[osc]->pan_coefs);
     // Don't smear the pan on first frame of new note
@@ -2083,7 +2116,7 @@ SAMPLE render_osc_wave(uint16_t osc, uint8_t core, SAMPLE* buf) {
         if (synth[osc]->wave != SILENT) {
             // apply distortion to osc if set, pre-filter; returns its own max
             // (folding can amplify a quiet release tail).
-            if (synth[osc]->dist.type != DIST_OFF) {
+            if (synth[osc]->dist_type != DIST_OFF) {
                 max_val = dist_process(buf, osc);
             }
             // apply filter to osc if set
@@ -2111,7 +2144,7 @@ SAMPLE render_osc_wave(uint16_t osc, uint8_t core, SAMPLE* buf) {
             // runs once per voice on that voice's mix alone.  After the
             // envelope, so note dynamics drive the shaper as they do per-osc;
             // before the filter, keeping the per-osc dist -> filter order.
-            if (synth[osc]->dist.type != DIST_OFF) {
+            if (synth[osc]->dist_type != DIST_OFF) {
                 max_val = dist_process(buf, osc);
             }
             // apply filter to osc if set

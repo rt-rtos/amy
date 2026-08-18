@@ -281,8 +281,7 @@ void snprintfloat3dp(char *s, size_t max_len, float val) {
     }                                                \
 }
 
-#define _EPRINT_VALS_5(VAL1, VAL2, VAL3, VAL4, VAL5, NAME, WIRECODE)  {      \
-        float vals[] = {VAL1, VAL2, VAL3, VAL4, VAL5}; \
+#define _EPRINT_VALS_BODY(NAME, WIRECODE) \
         int n_vals = sizeof(vals) / sizeof(float); \
         int last_one = -1; \
         for (int i = 0; i < n_vals; ++i) { \
@@ -301,7 +300,16 @@ void snprintfloat3dp(char *s, size_t max_len, float val) {
                     s += strlen(s); \
                 } \
             } \
-        } \
+        }
+
+#define _EPRINT_VALS_3(VAL1, VAL2, VAL3, NAME, WIRECODE)  {      \
+        float vals[] = {VAL1, VAL2, VAL3}; \
+        _EPRINT_VALS_BODY(NAME, WIRECODE) \
+    }
+
+#define _EPRINT_VALS_5(VAL1, VAL2, VAL3, VAL4, VAL5, NAME, WIRECODE)  {      \
+        float vals[] = {VAL1, VAL2, VAL3, VAL4, VAL5}; \
+        _EPRINT_VALS_BODY(NAME, WIRECODE) \
     }
 
 int sprint_event(amy_event *e, char *s, size_t len, bool wirecode) {
@@ -343,7 +351,9 @@ int sprint_event(amy_event *e, char *s, size_t len, bool wirecode) {
     _EPRINT_I_SEQ(mod_source, "mod_source", NUM_MOD_SOURCES, "L");
     _EPRINT_I(algorithm, "algorithm", "o");
     _EPRINT_I(filter_type, "filter_type", "G");
-    _EPRINT_VALS_5(e->dist_type, e->dist_drive, e->dist_bits, e->dist_rate, e->dist_mix, "dist_{type,drive,bits,rate,mix}", "C");
+    _EPRINT_VALS_3(e->dist_type, e->dist_bits, e->dist_rate, "dist_{type,bits,rate}", "C");
+    _EPRINT_COEF(dist_drive_coefs, "dist_drive_coefs", "U");
+    _EPRINT_COEF(dist_mix_coefs, "dist_mix_coefs", "W");
     _EPRINT_I_SEQ(bp_is_set, "bp_is_set", MAX_BREAKPOINT_SETS, "??");
     // Convert these two at least to vectors of ints, save several hundred bytes
     _EPRINT_I_SEQ(algo_source, "algo_source", MAX_ALGO_OPS, "O");
@@ -456,7 +466,9 @@ bool event_addresses_oscs(amy_event *e) {
     _RET_TRUE_IF_SET_SEQ(mod_source, NUM_MOD_SOURCES);
     _RET_TRUE_IF_SET(algorithm);
     _RET_TRUE_IF_SET(filter_type);
-    _RET_TRUE_IF_5_F_SET(dist_type, dist_drive, dist_bits, dist_rate, dist_mix);
+    if (AMY_IS_SET((float)(e->dist_type)) || AMY_IS_SET((float)(e->dist_bits)) || AMY_IS_SET((float)(e->dist_rate))) return true;
+    _RET_TRUE_IF_SET_COEF(dist_drive_coefs);
+    _RET_TRUE_IF_SET_COEF(dist_mix_coefs);
     _RET_TRUE_IF_SET_SEQ(bp_is_set, MAX_BREAKPOINT_SETS);
     // Convert these two at least to vectors of ints, save several hundred bytes
     _RET_TRUE_IF_SET_SEQ(algo_source, MAX_ALGO_OPS);
@@ -482,6 +494,17 @@ bool event_addresses_oscs(amy_event *e) {
     for (int i = 0; i < NUM_COMBO_COEFS; ++i) {                          \
         if ((int)queue->param == (int)PARAM + i) event->FIELD[i] = queue->data.f; \
     }
+// Const drive coef is linear drive, rest are octaves.
+#define _TEST_DRIVE_COEFS(FIELD, PARAM) \
+    for (int i = 0; i < NUM_COMBO_COEFS; ++i) {      \
+        if ((int)queue->param == (int)PARAM + i) {   \
+            if (i == COEF_CONST)  \
+                event->FIELD[i] = drive_of_logdrive(queue->data.f);   \
+            else \
+                event->FIELD[i] = queue->data.f; \
+        }                                    \
+    }
+
 // Const freq coef is in Hz, rest are linear.
 #define _TEST_FREQ_COEFS(FIELD, PARAM) \
     for (int i = 0; i < NUM_COMBO_COEFS; ++i) {      \
@@ -526,10 +549,8 @@ struct delta *deltas_to_event(struct delta *queue, struct amy_event *event) {
       _CASE_I(note_source_channel, NOTE_SOURCE_CHANNEL)
       _CASE_I(filter_type, FILTER_TYPE)
       _CASE_F(dist_type, DIST_TYPE)
-      _CASE_F(dist_drive, DIST_DRIVE)
       _CASE_F(dist_bits, DIST_BITS)
       _CASE_F(dist_rate, DIST_RATE)
-      _CASE_F(dist_mix, DIST_MIX)
       _CASE_I(algorithm, ALGORITHM)
       _CASE_F(eq_l, EQ_L)
       _CASE_F(eq_m, EQ_M)
@@ -559,6 +580,8 @@ struct delta *deltas_to_event(struct delta *queue, struct amy_event *event) {
       _TEST_FREQ_COEFS(freq_coefs, FREQ)
       _TEST_FREQ_COEFS(filter_freq_coefs, FILTER_FREQ)
       _TEST_COEFS(duty_coefs, DUTY)
+      _TEST_DRIVE_COEFS(dist_drive_coefs, DIST_LOGDRIVE)
+      _TEST_COEFS(dist_mix_coefs, DIST_MIX)
       _TEST_COEFS(pan_coefs, PAN)
       for (int i = 0; i < MAX_ALGO_OPS; ++i) {
           if ((int)queue->param == (int)ALGO_SOURCE_START + i)

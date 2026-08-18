@@ -430,12 +430,14 @@ enum params{
     // One id, not one per bus: like every other bus-directed param (EQ_*,
     // ECHO_*, REVERB_*), a VOLUME delta names its bus in delta.osc.  It used
     // to be VOLUME_BASE..VOLUME_BASE+n, which is what capped the bus count --
-    // the ids would have run into MODE below.  77..98 are now free.
+    // the ids would have run into MODE below.  95..98 are now free.
     VOLUME,                              // 71
-    // Per-osc distortion stage (see dist_process).
+    // Per-osc distortion stage (see dist_process).  Drive and mix are
+    // modulatable, so each claims a full coef vector out of that free block.
     DIST_TYPE,                           // 72
-    DIST_DRIVE, DIST_BITS,               // 73, 74
-    DIST_RATE, DIST_MIX,                 // 75, 76
+    DIST_BITS, DIST_RATE,                // 73, 74
+    DIST_LOGDRIVE,                       // 75..84
+    DIST_MIX=DIST_LOGDRIVE + NUM_COMBO_COEFS,  // 85..94
     MODE=99,                             // 99
     ALGO_SOURCE_START=100,               // 100..105
     ALGO_SOURCE_END=100+MAX_ALGO_OPS,    // 106
@@ -607,12 +609,14 @@ typedef struct amy_event {
     uint16_t mod_source[NUM_MOD_SOURCES];
     uint8_t algorithm;
     uint8_t filter_type;
-    // Per-osc distortion ('C' wire message).
+    // Per-osc distortion: scalars on 'C', drive coefs on 'U', mix coefs on 'W'.
     float dist_type;
-    float dist_drive;
     float dist_bits;
     float dist_rate;
-    float dist_mix;
+    // Like freq_coefs, the CONST coef is in the natural unit -- linear drive,
+    // 1 = unity -- and the modulation coefs are octaves of it.
+    float dist_drive_coefs[NUM_COMBO_COEFS];
+    float dist_mix_coefs[NUM_COMBO_COEFS];
     float eq_l;  // not in synth
     float eq_m;  // not in synth
     float eq_h;  // not in synth
@@ -698,7 +702,13 @@ struct synthinfo {
     uint8_t filter_type;
     // Distortion, applied pre-filter.  On a normal osc this is the per-osc
     // timbral stage; on a SILENT chained-osc head it shapes the summed voice.
-    dist_config_t dist;
+    // Drive and mix are combined per block into msynth, so what an osc stores
+    // is the authored coef vectors, not a ready-made dist_config_t.
+    uint8_t dist_type;
+    float dist_bits;
+    float dist_rate;
+    float dist_logdrive_coefs[NUM_COMBO_COEFS];
+    float dist_mix_coefs[NUM_COMBO_COEFS];
     uint16_t chained_osc;
     uint16_t mod_source[NUM_MOD_SOURCES];
     uint8_t algorithm;
@@ -743,6 +753,8 @@ struct mod_synthinfo {
     float last_filter_logfreq;  // filter freq history for smoothing.
     float resonance;
     float feedback;
+    float dist_drive;   // Combined per block; dist_block reads it once.
+    float dist_mix;
     uint16_t state;      // Used for PCM looping state.
     uint16_t next_state; // Used for PCM looping state.
     uint32_t loopstart;  // Used for PCM looping.
@@ -1032,6 +1044,8 @@ float logfreq_for_midi_note(float midi_note);
 float midi_note_for_logfreq(float logfreq);
 float logfreq_of_freq(float freq);
 float freq_of_logfreq(float logfreq);
+float logdrive_of_drive(float drive);
+float drive_of_logdrive(float logdrive);
 float portamento_ms_to_alpha(uint16_t portamento_ms);
 uint16_t alpha_to_portamento_ms(float alpha);
 int8_t check_init(amy_err_t (*fn)(), const char *name);

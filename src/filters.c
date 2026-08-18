@@ -1161,6 +1161,16 @@ AMY_IRAM_ATTR SAMPLE dist_block(SAMPLE * block, uint16_t len,
 
 // Per-osc entry point: the osc owns both its config and its hold state.
 AMY_IRAM_ATTR SAMPLE dist_process(SAMPLE * block, uint16_t osc) {
-    return dist_block(block, AMY_BLOCK_SIZE, &synth[osc]->dist,
-                      &synth[osc]->dist_state);
+    // Type, bits and rate are authored on the osc; drive and mix are combined
+    // from their coef vectors once per block in hold_and_modify.  Composing
+    // the config here rather than storing one keeps modulated state in msynth,
+    // where the rest of the per-block values live.
+    const dist_config_t cfg = {
+        .type = synth[osc]->dist_type,
+        .drive = msynth[osc]->dist_drive,
+        .bits = synth[osc]->dist_bits,
+        .rate = synth[osc]->dist_rate,
+        .mix = msynth[osc]->dist_mix,
+    };
+    return dist_block(block, AMY_BLOCK_SIZE, &cfg, &synth[osc]->dist_state);
 }
