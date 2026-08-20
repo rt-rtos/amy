@@ -388,6 +388,29 @@ int sprint_event(amy_event *e, char *s, size_t len, bool wirecode) {
     }
     _EPRINT_F(dist_drive, "dist_drive", "GD");
     _EPRINT_F(dist_mix, "dist_mix", "GM");
+    // Per-bus distortion rides 'J' with the same sub-command grammar.
+    if (AMY_IS_SET(e->bus_dist_type)) {
+        uint8_t bus_dist_type = e->bus_dist_type;
+        if (wirecode && bus_dist_type == DIST_CRUSH) {
+            snprintf(s, len - (size_t)(s - s_entry), "JH"); s += strlen(s);
+            if (AMY_IS_SET(e->bus_dist_bits)) { snprintf(s, len - (size_t)(s - s_entry), "%d", e->bus_dist_bits); s += strlen(s); }
+            if (AMY_IS_SET(e->bus_dist_rate)) {
+                snprintf(s, len - (size_t)(s - s_entry), ",%d", e->bus_dist_rate); s += strlen(s);
+            }
+        } else if (wirecode) {
+            snprintf(s, len - (size_t)(s - s_entry), "J%c%d",
+                     (bus_dist_type == DIST_FOLD) ? 'F' : 'C', (bus_dist_type != DIST_OFF) ? 1 : 0);
+            s += strlen(s);
+        } else {
+            snprintf(s, len - (size_t)(s - s_entry), " bus_dist_type: %d", bus_dist_type); s += strlen(s);
+        }
+    }
+    if (!wirecode) {
+        _EPRINT_I(bus_dist_bits, "bus_dist_bits", "");
+        _EPRINT_I(bus_dist_rate, "bus_dist_rate", "");
+    }
+    _EPRINT_F(bus_dist_drive, "bus_dist_drive", "JD");
+    _EPRINT_F(bus_dist_mix, "bus_dist_mix", "JM");
     _EPRINT_I_SEQ(bp_is_set, "bp_is_set", MAX_BREAKPOINT_SETS, "??");
     // Convert these two at least to vectors of ints, save several hundred bytes
     _EPRINT_I_SEQ(algo_source, "algo_source", MAX_ALGO_OPS, "O");
@@ -457,6 +480,13 @@ bool event_addresses_bus(amy_event *e) {
     _RET_TRUE_IF_5_F_SET(echo_level, echo_delay_ms, echo_max_delay_ms, echo_feedback, echo_filter_coef);
     _RET_TRUE_IF_5_F_SET(chorus_level, chorus_max_delay, chorus_lfo_freq, chorus_depth, chorus_depth);
     _RET_TRUE_IF_5_F_SET(reverb_level, reverb_liveness, reverb_damping, reverb_xover_hz, reverb_xover_hz);
+    // Not _RET_TRUE_IF_5_F_SET: the int fields' unset sentinels cast to
+    // ordinary floats rather than NaN.
+    _RET_TRUE_IF_SET(bus_dist_type);
+    _RET_TRUE_IF_SET(bus_dist_drive);
+    _RET_TRUE_IF_SET(bus_dist_bits);
+    _RET_TRUE_IF_SET(bus_dist_rate);
+    _RET_TRUE_IF_SET(bus_dist_mix);
     return false;
 }
 
@@ -597,6 +627,11 @@ struct delta *deltas_to_event(struct delta *queue, struct amy_event *event) {
       _CASE_F(reverb_liveness, REVERB_LIVENESS)
       _CASE_F(reverb_damping, REVERB_DAMPING)
       _CASE_F(reverb_xover_hz, REVERB_XOVER_HZ)
+      _CASE_I(bus_dist_type, BUS_DIST_TYPE)
+      _CASE_F(bus_dist_drive, BUS_DIST_DRIVE)
+      _CASE_I(bus_dist_bits, BUS_DIST_BITS)
+      _CASE_I(bus_dist_rate, BUS_DIST_RATE)
+      _CASE_F(bus_dist_mix, BUS_DIST_MIX)
       _CASE_I(eg_type[0], EG0_TYPE)
       _CASE_I(eg_type[1], EG1_TYPE)
       _CASE_F(velocity, VELOCITY)

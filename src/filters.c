@@ -1066,8 +1066,9 @@ void reset_parametric(uint16_t bus) {
 // Params arrive range-clamped from play_delta(); loop bodies are call-free
 // so they take the Xtensa zero-overhead-loop form.  Returns the abs max of
 // what it wrote (folding can amplify a quiet input, so the pre-distortion
-// max must not be reused).  Pre-gain needs MUL6A_SS: drive * x overflows
-// MUL4_SS's [-16, 16) range and wraps sign.
+// max must not be reused).  Pre-gain uses SMULR6: at bus scope drive * x can
+// pass MUL6A_SS's [-64, 64) and wrap sign; SMULR6 is exact on 64-bit-mul
+// hardware, and its 32x32 fallback's [-128, 128) is DIST_BUS_MAX's bound.
 AMY_IRAM_ATTR SAMPLE dist_block(SAMPLE * block, uint16_t len,
                                 const dist_config_t *cfg, dist_state_t *st) {
     AMY_PROFILE_START(DIST_PROCESS)
@@ -1079,7 +1080,7 @@ AMY_IRAM_ATTR SAMPLE dist_block(SAMPLE * block, uint16_t len,
     case DIST_CLIP:
         for (uint16_t i = 0; i < len; ++i) {
             SAMPLE x = block[i];
-            SAMPLE v = MUL6A_SS(x, drive);
+            SAMPLE v = SMULR6(x, drive);
             if (v > F2S(1.0f)) v = F2S(1.0f);
             if (v < F2S(-1.0f)) v = F2S(-1.0f);
             // Cubic soft knee y = v - v^3/3: unity small-signal gain, 2/3 at the rails.
@@ -1093,7 +1094,7 @@ AMY_IRAM_ATTR SAMPLE dist_block(SAMPLE * block, uint16_t len,
     case DIST_FOLD:
         for (uint16_t i = 0; i < len; ++i) {
             SAMPLE x = block[i];
-            SAMPLE v = MUL6A_SS(x, drive);
+            SAMPLE v = SMULR6(x, drive);
             // Triangle wavefolder: y = 1 - |((v + 1) mod 4) - 2|, identity on [-1, 1].
             SAMPLE y;
 #ifdef AMY_USE_FIXEDPOINT
@@ -1148,7 +1149,7 @@ AMY_IRAM_ATTR SAMPLE dist_block(SAMPLE * block, uint16_t len,
             // y[n] = pole * y[n-1] + (hold[n] - hold[n-1]).
             yn1 = FILT_MUL_SS(pole, yn1);
             if (count == 0) {
-                SAMPLE v = MUL6A_SS(x, drive);
+                SAMPLE v = SMULR6(x, drive);
                 // Saturate before quantizing: keeps hold on the CLIP/FOLD
                 // level scale and the wet term inside MUL4_SS's [-16, 16).
                 if (v > F2S(1.0f)) v = F2S(1.0f);
@@ -1185,4 +1186,27 @@ AMY_IRAM_ATTR SAMPLE dist_block(SAMPLE * block, uint16_t len,
 AMY_IRAM_ATTR SAMPLE dist_process(SAMPLE * block, uint16_t osc) {
     return dist_block(block, AMY_BLOCK_SIZE, &synth[osc]->dist,
                       &synth[osc]->dist_state);
+}
+
+// Wrap guard: the bus sum is unbounded, and SMULR6's 32x32 fallback caps the
+// drive product at [-128, 128), so pre-clamp to 8x full scale - the edge of
+// the mixdown's usable range anyway.
+#ifdef AMY_USE_FIXEDPOINT
+#define DIST_BUS_MAX (F2S(8.0f) - 1)   // one LSB inside the fallback's domain
+#else
+#define DIST_BUS_MAX F2S(8.0f)
+#endif
+
+// Per-bus entry point, first in the bus FX chain so echo/reverb take clean
+// tails of the shaped signal; per-channel state per dist_block's contract.
+AMY_IRAM_ATTR void dist_process_bus(uint16_t bus, SAMPLE *busbuf) {
+    for (uint16_t c = 0; c < AMY_NCHANS; ++c) {
+        SAMPLE *block = busbuf + c * AMY_BLOCK_SIZE;
+        for (uint16_t i = 0; i < AMY_BLOCK_SIZE; ++i) {
+            if (block[i] > DIST_BUS_MAX) block[i] = DIST_BUS_MAX;
+            if (block[i] < -DIST_BUS_MAX) block[i] = -DIST_BUS_MAX;
+        }
+        dist_block(block, AMY_BLOCK_SIZE, &amy_global.bus[bus]->dist,
+                   &amy_global.bus[bus]->dist_state[c]);
+    }
 }

@@ -476,35 +476,44 @@ int amy_parse_synth_layer_message(char *message, amy_event *e) {
     return skip_chars;
 }
 
+// Distortion sub-command grammar, shared by the per-osc ('G') and per-bus
+// ('J') stages; the caller hands over whichever scope's event fields the
+// letter addresses. C<v> and F<v> enable clip and fold (0 turns the stage
+// off), H<bits>[,<rate>] enables the bitcrusher (H0 turns it off), D<drive>
+// and M<mix> set the drive and wet/dry shared by every type.
+static int parse_dist_sub_message(char *message, uint8_t *type, float *drive,
+                                  uint8_t *bits, uint16_t *rate, float *mix) {
+    char cmd = message[0];
+    message++;
+    if (cmd == 'C')  *type = (atoff(message) != 0) ? DIST_CLIP : DIST_OFF;
+    else if (cmd == 'F')  *type = (atoff(message) != 0) ? DIST_FOLD : DIST_OFF;
+    else if (cmd == 'H') {
+        uint16_t vals[2];
+        parse_list_uint16_t(message, vals, 2, AMY_UNSET_VALUE(vals[0]));
+        if (vals[0] == 0) {
+            *type = DIST_OFF;
+        } else {
+            *type = DIST_CRUSH;
+            if (AMY_IS_SET(vals[0])) *bits = (uint8_t)MIN(vals[0], 24);
+            if (AMY_IS_SET(vals[1])) *rate = vals[1];
+        }
+    }
+    else if (cmd == 'D')  *drive = atoff(message);
+    else if (cmd == 'M')  *mix = atoff(message);
+    else fprintf(stderr, "Unrecognized distortion command '%s'\n", message - 1);
+    return 1;  // skip the sub-command letter.
+}
+
 // Parser for the 'G' prefix: a digit is filter_type as ever; a letter is a
-// distortion sub-command. GC<v> and GF<v> enable clip and fold (0 turns the
-// stage off), GH<bits>[,<rate>] enables the bitcrusher (GH0 turns it off),
-// GD<drive> and GM<mix> set the drive and wet/dry shared by every type.
+// per-osc distortion sub-command.
 int amy_parse_dist_layer_message(char *message, amy_event *e) {
     if (message[0] >= '0' && message[0] <= '9') {
         // It's just the filter type.
         e->filter_type = atoi(message);
         return 0;  // no extra skip.
     }
-    char cmd = message[0];
-    message++;
-    if (cmd == 'C')  e->dist_type = (atoff(message) != 0) ? DIST_CLIP : DIST_OFF;
-    else if (cmd == 'F')  e->dist_type = (atoff(message) != 0) ? DIST_FOLD : DIST_OFF;
-    else if (cmd == 'H') {
-        uint16_t vals[2];
-        parse_list_uint16_t(message, vals, 2, AMY_UNSET_VALUE(vals[0]));
-        if (vals[0] == 0) {
-            e->dist_type = DIST_OFF;
-        } else {
-            e->dist_type = DIST_CRUSH;
-            if (AMY_IS_SET(vals[0])) e->dist_bits = (uint8_t)MIN(vals[0], 24);
-            if (AMY_IS_SET(vals[1])) e->dist_rate = vals[1];
-        }
-    }
-    else if (cmd == 'D')  e->dist_drive = atoff(message);
-    else if (cmd == 'M')  e->dist_mix = atoff(message);
-    else fprintf(stderr, "Unrecognized distortion command '%s'\n", message - 1);
-    return 1;  // skip the sub-command letter.
+    return parse_dist_sub_message(message, &e->dist_type, &e->dist_drive,
+                                  &e->dist_bits, &e->dist_rate, &e->dist_mix);
 }
 
 // Parse a sample-load parameter list ('z'/'zS' messages): comma-separated
@@ -775,7 +784,11 @@ int amy_parse_message(char * message, amy_event *e) {
             case 'i': pos += amy_parse_synth_layer_message(arg, e); break;  // Skip over second cmd letter, if any, or entire MIDI CC code string.
             case 'I': e->ratio = atoff(arg); break;
             case 'j': e->tempo = atoff(arg); break;
-            /* J available */
+            // Per-bus distortion: the 'G' sub-command grammar at bus scope
+            // ('y' picks the bus).
+            case 'J': pos += parse_dist_sub_message(arg, &e->bus_dist_type,
+                          &e->bus_dist_drive, &e->bus_dist_bits,
+                          &e->bus_dist_rate, &e->bus_dist_mix); break;
             // chorus.level
             case 'k': if(AMY_HAS_CHORUS) {
                 float chorus_params[4];
