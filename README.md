@@ -14,6 +14,61 @@ polyphony and that is kept deliberately: responding to bus level is what a
 mixbus saturator is for. Sparse sources duck under a dense pad, chords saturate
 harder than single notes.
 
+## Demo
+
+**10 - bus scope: one signal distorted BY another**
+A quiet sustained
+mid sine plus a loud low sine pulsing one second on, one off; identical clip
+settings in both arms. Per-osc - even applied to both oscs - leaves the mid
+tone static. On the bus the low tone drags the sum into the knee, so the mid
+tone ducks and buzzes exactly while the low tone sounds
+
+https://github.com/user-attachments/assets/f72bedee-0ae1-4f2a-9e30-ec4703fdf023
+
+
+
+https://github.com/user-attachments/assets/addafedd-4c0c-442d-a159-dfb6d682b792
+
+
+
+https://github.com/user-attachments/assets/e03a6299-c96f-449a-b69e-087ab46da5ce
+
+**12 - bus drive ramp on a held triad.** The ET triad from demo 6, sustained,
+with bus CLIP drive swept 1 to 16: the intermodulation fan blooms out of
+three pure tones in one gesture
+
+
+
+https://github.com/user-attachments/assets/d4083b94-71e6-4cd3-8328-5c997eabc2cd
+
+
+
+https://github.com/user-attachments/assets/def46ab4-a1d2-4c41-9777-69af6e216ca5
+
+
+
+**13 - chain position: crush before echo vs after.** 13a is the real chain -
+the bus crusher feeds the bus echo, so every repeat is a scaled copy of the
+crushed stab and the tail decays smoothly. 13b applies the same 5-bit
+quantizer AFTER the echo (simulated: numpy quantization of the echoed dry
+render, labeled as such) - the decaying repeats fall through the quantization
+steps and gate out, exactly like demo 5's release tail. Why the stage sits
+first in the bus FX chain.
+
+
+
+https://github.com/user-attachments/assets/a492003d-9ca9-4a77-9787-d9133000d7b0
+
+
+
+https://github.com/user-attachments/assets/2699e9e3-1de7-41ac-ac9e-2c225dcd791a
+
+
+
+https://github.com/user-attachments/assets/c3321983-ed44-47ca-846f-0f18844a49fc
+
+
+
 ## Wire
 
 `J` mirrors `G`'s sub-command grammar at bus scope: `JC`/`JF`/`JH` pick the
