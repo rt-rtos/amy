@@ -30,9 +30,19 @@ printing state back to wire has to reconstruct which letter to emit.
 
 ## Demo
 
+**15 - stacked stages: dry -> clip -> +fold -> +crush -> crush-only.** One
+triangle bass riff over five identical bars, the enabled stage set changing
+on each downbeat: dry, clip, clip+fold, all three, crusher alone. Fold and
+crush each switch in without touching the stages already on, and the last
+bar drops clip and fold with the crusher untouched - each toggle moves only
+its own stage; under the one-type-slot interim every one of these
+transitions would have silently dropped the others. Each stage applies the
+shared drive as its own pre-gain, so stacking re-amplifies per pass (clip's
+bounded output is re-driven into the folder)
 
 
-https://github.com/user-attachments/assets/5ae2dde8-cc20-466e-bcbb-c9f6b6d1a2ca
+
+https://github.com/user-attachments/assets/5ef62b3b-f6a8-4a75-bc14-d8c7eb4f2d23
 
 
 
