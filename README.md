@@ -28,6 +28,14 @@ printing state back to wire has to reconstruct which letter to emit.
 - Only the crusher has state, so its enable toggle is the one that resets
   the sample-and-hold and DC blocker.
 
+## Demo
+
+
+
+https://github.com/user-attachments/assets/5ae2dde8-cc20-466e-bcbb-c9f6b6d1a2ca
+
+
+
 ## Where to look
 
 - `src/filters.c` - `dist_block` becomes the per-stage pass loop.
