@@ -37,6 +37,22 @@ of them are reachable while drive is a scalar fixed at delta apply.
 - `DIST_LOGDRIVE` and `DIST_MIX` claim ten param ids each out of the block
   `VOLUME` freed, leaving 97..98.
 
+## Demo
+
+
+
+https://github.com/user-attachments/assets/dbe905ed-6530-4b07-aee6-752ef5545540
+
+
+
+https://github.com/user-attachments/assets/4889c6f3-0112-4cbb-a27e-5cada1351569
+
+
+
+https://github.com/user-attachments/assets/faa2e6ce-dafc-48b6-bfe9-8b601c88f377
+
+
+
 ## Where to look
 
 - `src/amy.c` - `hold_and_modify` combine; `dist_process` composing a
