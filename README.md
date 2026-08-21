@@ -39,15 +39,24 @@ of them are reachable while drive is a scalar fixed at delta apply.
 
 ## Demo
 
-
+**16a - drive rides velocity.** Drive = constant 1 plus 3 octaves of
+velocity (`GD1,,3` on the wire) into CLIP: soft hits play a near-pure tone,
+hard hits a square bark - the waveshaper responding to touch like part of
+the voice, not an insert effect.
 
 https://github.com/user-attachments/assets/dbe905ed-6530-4b07-aee6-752ef5545540
 
-
+**16b - the static control.** Identical notes at static drive 8 - the value
+the vel-coef arm reaches at full velocity, so the hard hits match 16a
+exactly, while the soft hits buzz just as hard relative to their level:
+static drive can't tell touch apart.
 
 https://github.com/user-attachments/assets/4889c6f3-0112-4cbb-a27e-5cada1351569
 
-
+**16c - drive on EG1.** Drive = constant 0.5 plus 3 octaves of EG1 on a
+single held note - the drive swells 0.5 to 4 over four seconds, crossing the
+clip knee mid-note: pure tone into growl with no parameter events after the
+note-on.
 
 https://github.com/user-attachments/assets/faa2e6ce-dafc-48b6-bfe9-8b601c88f377
 
